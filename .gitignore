@@ -60,3 +60,5 @@ target/
 
 #Ipython Notebook
 .ipynb_checkpoints
+!/django_saml2_auth/ignore/views_scratch.py
+/django_saml2_auth/ignore/

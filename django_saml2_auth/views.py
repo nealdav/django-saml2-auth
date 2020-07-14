@@ -160,7 +160,9 @@ def acs(r):
     next_url = r.session.get('login_next_url', _default_next_url())
     print('acs next_url:', next_url)
     # If relayState params is passed, use that else consider the previous 'next_url'
-    next_url = r.POST.get('RelayState', next_url)
+    relaystate = bool(r.POST.get('RelayState'))  # handle empty string
+    next_url = relaystate or next_url
+    print('RelayState next_url:', next_url)
     
     if not resp:
         return HttpResponseRedirect(get_reverse([denied, 'denied', 'django_saml2_auth:denied']))
@@ -206,6 +208,7 @@ def acs(r):
 
     if settings.SAML2_AUTH.get('USE_JWT') is True:
         # We use JWT auth send token to frontend
+        print('USE_JWT', settings.SAML2_AUTH.get('USE_JWT'))
         jwt_token = jwt_encode(target_user)
         query = '?uid={}&token={}'.format(target_user.id, jwt_token)
 
@@ -215,9 +218,12 @@ def acs(r):
         return HttpResponseRedirect(frontend_url+query)
 
     if is_new_user:
+        print('is_new_user', is_new_user)
         try:
+            print('try return: django_saml2_auth/welcome.html')
             return render(r, 'django_saml2_auth/welcome.html', {'user': r.user})
         except TemplateDoesNotExist:
+            print('except return:', next_url)
             return HttpResponseRedirect(next_url)
     else:
         return HttpResponseRedirect(next_url)

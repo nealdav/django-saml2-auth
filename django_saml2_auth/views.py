@@ -161,7 +161,8 @@ def acs(r):
     print('acs next_url:', next_url)
     # If relayState params is passed, use that else consider the previous 'next_url'
     relaystate = bool(r.POST.get('RelayState'))  # handle empty string
-    next_url = relaystate or next_url
+    if relaystate:
+        next_url = r.POST['RelayState']
     print('RelayState next_url:', next_url)
     
     if not resp:

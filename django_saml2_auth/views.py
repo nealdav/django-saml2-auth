@@ -199,6 +199,55 @@ def acs(r):
         else:
             return HttpResponseRedirect(get_reverse([denied, 'denied', 'django_saml2_auth:denied']))
 
+    ### START ADDING OKTA GROUPS ###
+    # https://github.com/fangli/django-saml2-auth/pull/102/commits/a669a3ba7e1d3417f56cc59ad239cd96afd1d9cd
+    # in settings.py:
+    #
+    # ATTRIBUTES_MAP': {
+    #     'email': 'Email',
+    #     'first_name': 'FirstName',
+    #     'last_name': 'LastName',
+    #     'groups': 'Groups',   #  internal group name:Okta ATTRIBUTES_MAP key (case sensitive)
+    # },
+    #
+    # 'GROUPS_MAP': {  # Okta group name:Django internal group name
+    #     'Site-Admin': 'Site-Admin',   # example
+    #     'Site-Manager': 'Site-Manager',
+    #    ....
+    # }
+    
+    group_attribute = settings.SAML2_AUTH.get('ATTRIBUTES_MAP', {}).get('groups', None)
+    group_map = settings.SAML2_AUTH.get('GROUPS_MAP', None)
+
+    print('SAML group_attribute:', group_attribute)
+    print('SAML group_map:', group_map)
+
+    if group_attribute is not None and group_attribute in user_identity:
+        print('SAML Group config - Successful')
+        groups = []
+
+        for group_name in user_identity[group_attribute]:
+            # Group names can optionally be mapped to different names in Django
+            # print('SAML group_name:', group_name)  # DEBUG
+            if group_map is not None and group_name in group_map:
+                group_name_django = group_map[group_name]
+            else:
+                group_name_django = group_name
+    
+            try:
+                groups.append(Group.objects.get(name=group_name_django))
+                print('SAML groups.append:', group_name_django)
+            except Group.DoesNotExist:
+                # print('EXCEPT Group.DoesNotExist:', group_name_django)  # DEBUG
+                pass
+
+        if parse_version(get_version()) >= parse_version('2.0'):
+            target_user.groups.set(groups)
+        else:
+            target_user.groups = groups
+    print('SAML target_user.groups', target_user.groups.__dict__)
+    ### END ADDING OKTA GROUPS ###
+
     r.session.flush()
 
     if target_user.is_active:

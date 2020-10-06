@@ -127,9 +127,12 @@ def _get_saml_client(domain):
 
 @login_required
 def welcome(r):
+    print('SAML welcome func')
     try:
+        print('SAML welcome try (render template)')
         return render(r, 'django_saml2_auth/welcome.html', {'user': r.user})
     except TemplateDoesNotExist:
+        print('SAML welcome except (TemplateDoesNotExist)')
         return HttpResponseRedirect(_default_next_url())
 
 
@@ -157,10 +160,11 @@ def _create_new_user(username, email, firstname, lastname):
 def acs(r):
     saml_client = _get_saml_client(get_current_domain(r))
     resp = r.POST.get('SAMLResponse', None)
+    print('r.POST', r.POST)
     next_url = r.session.get('login_next_url', _default_next_url())
     print('acs next_url:', next_url)
     # If relayState params is passed, use that else consider the previous 'next_url'
-    relaystate = bool(r.POST.get('RelayState'))  # handle empty string
+    relaystate = bool(r.POST.get('RelayState'))  # handle empty string truthiness
     if relaystate:
         next_url = r.POST['RelayState']
     print('RelayState next_url:', next_url)
@@ -176,7 +180,9 @@ def acs(r):
     user_identity = authn_response.get_identity()
     if user_identity is None:
         return HttpResponseRedirect(get_reverse([denied, 'denied', 'django_saml2_auth:denied']))
-
+    
+    print('SAML user_identity:', user_identity)
+    # consult ATTRIBUTES_MAP from settings to determine the keys to use
     user_email = user_identity[settings.SAML2_AUTH.get('ATTRIBUTES_MAP', {}).get('email', 'Email')][0]
     user_name = user_identity[settings.SAML2_AUTH.get('ATTRIBUTES_MAP', {}).get('username', 'UserName')][0]
     user_first_name = user_identity[settings.SAML2_AUTH.get('ATTRIBUTES_MAP', {}).get('first_name', 'FirstName')][0]
@@ -187,17 +193,20 @@ def acs(r):
 
     try:
         target_user = User.objects.get(username=user_name)
-        if settings.SAML2_AUTH.get('TRIGGER', {}).get('BEFORE_LOGIN', None):
-            import_string(settings.SAML2_AUTH['TRIGGER']['BEFORE_LOGIN'])(user_identity)
     except User.DoesNotExist:
         new_user_should_be_created = settings.SAML2_AUTH.get('CREATE_USER', True)
         if new_user_should_be_created: 
             target_user = _create_new_user(user_name, user_email, user_first_name, user_last_name)
+            # CREATE USER TRIGGER (POST CREATION)
             if settings.SAML2_AUTH.get('TRIGGER', {}).get('CREATE_USER', None):
                 import_string(settings.SAML2_AUTH['TRIGGER']['CREATE_USER'])(user_identity)
             is_new_user = True
         else:
             return HttpResponseRedirect(get_reverse([denied, 'denied', 'django_saml2_auth:denied']))
+
+    # BEFORE LOGIN TRIGGER
+    if settings.SAML2_AUTH.get('TRIGGER', {}).get('BEFORE_LOGIN', None):
+        import_string(settings.SAML2_AUTH['TRIGGER']['BEFORE_LOGIN'])(user_identity)
 
     ### START ADDING OKTA GROUPS ###
     # https://github.com/fangli/django-saml2-auth/pull/102/commits/a669a3ba7e1d3417f56cc59ad239cd96afd1d9cd
@@ -225,34 +234,41 @@ def acs(r):
     if group_attribute is not None and group_attribute in user_identity:
         print('SAML Group config - Successful')
         groups = []
-
+    
         for group_name in user_identity[group_attribute]:
             # Group names can optionally be mapped to different names in Django
-            # print('SAML group_name:', group_name)  # DEBUG
+            print('SAML group_name:', group_name)
             if group_map is not None and group_name in group_map:
                 group_name_django = group_map[group_name]
             else:
                 group_name_django = group_name
-    
+        
             try:
                 groups.append(Group.objects.get(name=group_name_django))
-                print('SAML groups.append:', group_name_django)
+                print('TRY groups.append:', group_name_django)
             except Group.DoesNotExist:
-                # print('EXCEPT Group.DoesNotExist:', group_name_django)  # DEBUG
+                print('EXCEPT Group.DoesNotExist:', group_name_django)
                 pass
-
+    
         if parse_version(get_version()) >= parse_version('2.0'):
             target_user.groups.set(groups)
         else:
             target_user.groups = groups
-    print('SAML target_user.groups', target_user.groups.__dict__)
+    print('SAML target_user.groups', target_user.groups)
     ### END ADDING OKTA GROUPS ###
-
+    
     r.session.flush()
 
     if target_user.is_active:
         target_user.backend = 'django.contrib.auth.backends.ModelBackend'
         login(r, target_user)
+
+        ### START AFTER LOGIN TRIGGER ###
+        # https://github.com/fangli/django-saml2-auth/pull/93/commits/5df42c192ed61747c7d7d160f2927b56cba5a41d
+        if settings.SAML2_AUTH.get('TRIGGER', {}).get('AFTER_LOGIN', None):
+            import_string(settings.SAML2_AUTH['TRIGGER']['AFTER_LOGIN'])(user_identity)
+        ### END AFTER LOGIN TRIGGER ###
+        
     else:
         return HttpResponseRedirect(get_reverse([denied, 'denied', 'django_saml2_auth:denied']))
 
@@ -273,13 +289,14 @@ def acs(r):
             print('try return: django_saml2_auth/welcome.html')
             return render(r, 'django_saml2_auth/welcome.html', {'user': r.user})
         except TemplateDoesNotExist:
-            print('except return:', next_url)
+            print('except return (next_url):', next_url)
             return HttpResponseRedirect(next_url)
     else:
         return HttpResponseRedirect(next_url)
 
 
 def signin(r):
+    print('SAML signin request:', r, r.__dict__)
     try:
         import urlparse as _urlparse
         from urllib import unquote
@@ -305,6 +322,8 @@ def signin(r):
 
     r.session['login_next_url'] = next_url
 
+    print('SAML signin next_url:', next_url)
+
     saml_client = _get_saml_client(get_current_domain(r))
     _, info = saml_client.prepare_for_authenticate(relay_state=next_url)
 
@@ -315,6 +334,8 @@ def signin(r):
             redirect_url = value
             break
 
+    print('SAML signin headers:', info['headers'])
+    print('SAML signin redirect_url:', redirect_url)
     return HttpResponseRedirect(redirect_url)
 
 
